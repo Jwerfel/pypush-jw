@@ -11,6 +11,8 @@ from . import imessage
 
 import trio
 
+from datetime import datetime
+
 logging.basicConfig(
     level=logging.NOTSET, format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
 )
@@ -21,11 +23,11 @@ logging.getLogger("py.warnings").setLevel(logging.ERROR)  # Ignore warnings from
 logging.getLogger("asyncio").setLevel(logging.WARNING)
 logging.getLogger("jelly").setLevel(logging.INFO)
 logging.getLogger("nac").setLevel(logging.INFO)
-logging.getLogger("apns").setLevel(logging.DEBUG)
+logging.getLogger("apns").setLevel(logging.INFO)
 logging.getLogger("albert").setLevel(logging.INFO)
 logging.getLogger("ids").setLevel(logging.DEBUG)
 logging.getLogger("bags").setLevel(logging.INFO)
-logging.getLogger("imessage").setLevel(logging.DEBUG)
+logging.getLogger("imessage").setLevel(logging.INFO)
 
 logging.captureWarnings(True)
 
@@ -47,6 +49,8 @@ if CONFIG.get("commit_hash") != commit_hash:
     CONFIG["commit_hash"] = commit_hash
     if "id" in CONFIG:
         del CONFIG["id"]
+
+
 
 
 def safe_b64decode(s):
@@ -97,15 +101,17 @@ async def main():
             json.dump(CONFIG, f, indent=4)
 
         im = imessage.iMessageUser(conn, user)
+        current_effect: str | None = None
+        current_participants: list[str] = []
 
         # Send a message to myself
         async with trio.open_nursery() as nursery:
-            nursery.start_soon(input_task, im)
-            nursery.start_soon(output_task, im)
+            nursery.start_soon(input_task, im, current_participants, current_effect)
+            nursery.start_soon(output_task, im, current_participants, current_effect)
 
-async def input_task(im: imessage.iMessageUser):
-    current_effect: str | None = None
-    current_participants: list[str] = []
+async def input_task(im: imessage.iMessageUser, current_participants: list[str], current_effect: str):
+    #current_effect: str | None = None
+    #current_participants: list[str] = []
 
     def is_cmd(cmd_str: str, name: str) -> bool:
         return cmd_str in [name, name[0]] or cmd_str.startswith(f"{name} ") or cmd_str.startswith(f"{name[0]} ")
@@ -190,10 +196,24 @@ async def input_task(im: imessage.iMessageUser):
         else:
             print("No chat selected")
 
-async def output_task(im: imessage.iMessageUser):
+async def output_task(im: imessage.iMessageUser, current_participants: list[str], current_effect: str):
     while True:
         msg = await im.receive()
-        print(str(msg))
+        print("MSG: " + str(msg))
+        print("msg sender: " + msg.sender)
+        print(f"msg participants: {msg.participants}")
+        s = msg.text.strip().lower()
+        if s == "time":
+            respondTo = [msg.sender]
+            print("got a time command, sending the time!")
+            #print(f"Sending to {current_participants}")
+            print(f"Sending to {respondTo}")
+            now = datetime.now()
+            current_time = now.strftime("%H:%M:%S")
+            await im.send(imessage.iMessage.create(im, current_time, respondTo, current_effect))
+            current_effect = None
+            print("sent the time response")
+            
 
 
 def entrypoint():

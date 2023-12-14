@@ -10,6 +10,7 @@ from . import ids
 from . import imessage
 
 import trio
+import feedparser
 
 from datetime import datetime
 
@@ -195,25 +196,76 @@ async def input_task(im: imessage.iMessageUser, current_participants: list[str],
             current_effect = None
         else:
             print("No chat selected")
+            
+def test_func():
+    print("in test_func()")
+
+
+    
+
+async def process_msg(msg : imessage.Message, im: imessage.iMessageUser, current_effect: str):
+
+    async def sendRssFeed(im: imessage.iMessageUser, current_effect: str, respondTo: str, name: str):
+        if name == "cnn":
+            url = "http://rss.cnn.com/rss/cnn_topstories.rss"
+        elif name == "espn":
+            url = "https://www.espn.com/espn/rss/news"
+        elif name == "ars":
+            url = "https://feeds.arstechnica.com/arstechnica/index"
+
+        msg = getRssFeed(url)
+        msg2 = ""
+        msgLength = len(msg)
+        maxLength = 3000
+        if msgLength > maxLength:
+            msg2 = msg[maxLength:]
+            msg = msg[:maxLength]
+
+        print("About to send msg of length: " + str(len(msg)))
+        await im.send(imessage.iMessage.create(im, msg, respondTo, current_effect))
+        current_effect = None
+        if msgLength > maxLength:
+            print("About to send msg2 of length: " + str(len(msg2)))
+            await im.send(imessage.iMessage.create(im, msg2, respondTo, current_effect))
+            current_effect = None
+            
+
+    def getRssFeed(url: str) -> str:
+        feed = feedparser.parse(url)
+        print("Feed Title:", feed.feed.title)
+        msg = feed.feed.title + "\n"
+        for entry in feed.entries:
+            msg += "-" + entry.title + "\n"
+        
+        return msg
+    
+    
+    #print("processing msg " + str(msg))
+    s = msg.text.strip().lower()
+    respondTo = [msg.sender]
+    if s == "time":
+        now = datetime.now()
+        current_time = now.strftime("%m/%d/%Y, %H:%M:%S")
+        await im.send(imessage.iMessage.create(im, current_time, respondTo, current_effect))
+        current_effect = None
+    elif s == "cnn":
+        await sendRssFeed(im, current_effect, respondTo, s)
+    elif s == "espn":
+        await sendRssFeed(im, current_effect, respondTo, s)
+    elif s == "ars":
+        await sendRssFeed(im, current_effect, respondTo, s)        
+            
+    else:
+        print("unknown msg: " + s)
 
 async def output_task(im: imessage.iMessageUser, current_participants: list[str], current_effect: str):
+    
     while True:
         msg = await im.receive()
         print("MSG: " + str(msg))
-        print("msg sender: " + msg.sender)
-        print(f"msg participants: {msg.participants}")
-        s = msg.text.strip().lower()
-        if s == "time":
-            respondTo = [msg.sender]
-            print("got a time command, sending the time!")
-            #print(f"Sending to {current_participants}")
-            print(f"Sending to {respondTo}")
-            now = datetime.now()
-            current_time = now.strftime("%H:%M:%S")
-            await im.send(imessage.iMessage.create(im, current_time, respondTo, current_effect))
-            current_effect = None
-            print("sent the time response")
-            
+        #print("about to process msg")
+        #test_func()
+        await process_msg(msg, im, current_effect)
 
 
 def entrypoint():

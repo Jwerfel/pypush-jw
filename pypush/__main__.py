@@ -13,6 +13,7 @@ import trio
 import feedparser
 
 from datetime import datetime
+import urllib.request
 
 logging.basicConfig(
     level=logging.NOTSET, format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
@@ -44,12 +45,19 @@ try:
 except FileNotFoundError:
     CONFIG = {}
 
+
+try:
+    with open("settings.json", "r") as s:
+        SETTINGS = json.load(s)
+except FileNotFoundError:
+    SETTINGS = {}
+
 # Re-register if the commit hash has changed
-if CONFIG.get("commit_hash") != commit_hash:
-    logging.warning("pypush commit is different, forcing re-registration...")
-    CONFIG["commit_hash"] = commit_hash
-    if "id" in CONFIG:
-        del CONFIG["id"]
+##if CONFIG.get("commit_hash") != commit_hash:
+##    logging.warning("pypush commit is different, forcing re-registration...")
+##    CONFIG["commit_hash"] = commit_hash
+##    if "id" in CONFIG:
+##        del CONFIG["id"]
 
 
 
@@ -188,6 +196,9 @@ async def input_task(im: imessage.iMessageUser, current_participants: list[str],
                 await im.typing(current_participants, False)
             else:
                 print("No chat selected")
+        elif is_cmd(cmd, "options"):
+            print("time")
+            print("rss <espn|cnn|ars|macrumors>")
         elif len(current_participants) > 0:
             if cmd.startswith("\\"):
                 cmd = cmd[1:]
@@ -212,22 +223,11 @@ async def process_msg(msg : imessage.Message, im: imessage.iMessageUser, current
             url = "https://www.espn.com/espn/rss/news"
         elif name == "ars":
             url = "https://feeds.arstechnica.com/arstechnica/index"
+        elif name == "macrumors":
+            url = "https://feeds.macrumors.com/MacRumors-All"
 
         msg = getRssFeed(url)
-        msg2 = ""
-        msgLength = len(msg)
-        maxLength = 3000
-        if msgLength > maxLength:
-            msg2 = msg[maxLength:]
-            msg = msg[:maxLength]
-
-        print("About to send msg of length: " + str(len(msg)))
-        await im.send(imessage.iMessage.create(im, msg, respondTo, current_effect))
-        current_effect = None
-        if msgLength > maxLength:
-            print("About to send msg2 of length: " + str(len(msg2)))
-            await im.send(imessage.iMessage.create(im, msg2, respondTo, current_effect))
-            current_effect = None
+        await sendResponseChunkedIfNeeded(im, current_effect, respondTo, msg)
             
 
     def getRssFeed(url: str) -> str:
@@ -235,10 +235,40 @@ async def process_msg(msg : imessage.Message, im: imessage.iMessageUser, current
         print("Feed Title:", feed.feed.title)
         msg = feed.feed.title + "\n"
         for entry in feed.entries:
-            msg += "-" + entry.title + "\n"
+            msg += "-" + entry.title + " - " + entry.link + "\n"
         
         return msg
-    
+
+    async def sendResponseChunkedIfNeeded(im: imessage.iMessageUser, current_effect: str, respondTo: str, msg: str):
+        maxLength = 3000
+        msgPiece = msg[:maxLength]
+        await im.send(imessage.iMessage.create(im, msgPiece, respondTo, current_effect))
+        current_effect = None
+        msg = msg[maxLength:]
+        length = len(msg)
+        while length > 0:
+            msgPiece = msg[:maxLength]
+            await im.send(imessage.iMessage.create(im, msgPiece, respondTo, current_effect))
+            current_effect = None
+            msg = msg[maxLength:]
+            length = len(msg)
+        
+        
+
+    async def downloadAndSendUrl(im: imessage.iMessageUser, current_effect: str, respondTo: str, pageUrl: str):
+        apiKey = SETTINGS.get("extractorApiKey")
+        if apiKey == "":
+            print("apikey for extractor is missing")
+            await sendResponseChunkedIfNeeded(im, current_effect, respondTo, "missing extractor API key")
+        else:
+            #print("api key is: " + apiKey)
+            url = "https://extractorapi.com/api/v1/extractor/?apikey=" + apiKey + "&url=" + pageUrl + "&fields=title"
+            with urllib.request.urlopen(url) as url:
+                data = json.load(url)
+                t = data["text"]
+                #print("Got data: " + t)
+                await sendResponseChunkedIfNeeded(im, current_effect, respondTo, t)
+          
     
     #print("processing msg " + str(msg))
     s = msg.text.strip().lower()
@@ -248,12 +278,16 @@ async def process_msg(msg : imessage.Message, im: imessage.iMessageUser, current
         current_time = now.strftime("%m/%d/%Y, %H:%M:%S")
         await im.send(imessage.iMessage.create(im, current_time, respondTo, current_effect))
         current_effect = None
-    elif s == "cnn":
-        await sendRssFeed(im, current_effect, respondTo, s)
-    elif s == "espn":
-        await sendRssFeed(im, current_effect, respondTo, s)
-    elif s == "ars":
-        await sendRssFeed(im, current_effect, respondTo, s)        
+    elif s == "options":
+        msg = "time\nrss <espn|cnn|ars|macrumors>\n<url>"
+        await im.send(imessage.iMessage.create(im, msg, respondTo, current_effect))
+        current_effect = None
+    elif s.startswith("rss "):
+        rssName = s[4:]
+        await sendRssFeed(im, current_effect, respondTo, rssName)
+    elif s.startswith("https://"):
+        url = s
+        await downloadAndSendUrl(im, current_effect, respondTo, url)
             
     else:
         print("unknown msg: " + s)
